@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: lingua-translate-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    buildCommand: ""
+    startCommand: "gunicorn --bind 0.0.0.0:$PORT --workers 2 main:create_app()"
+    healthCheckPath: /
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: REDIS_HOST
+        fromService:
+          type: redis
+          name: lingua-translate-redis
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          type: redis
+          name: lingua-translate-redis
+          property: port
+    
+  - type: redis
+    name: lingua-translate-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru

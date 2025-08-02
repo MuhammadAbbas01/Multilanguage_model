@@ -1,0 +1,64 @@
+# Multi-stage build for production optimization
+# Stage 1: Build and install dependencies
+FROM python:3.10-slim as base
+
+# Set environment variables to optimize Python and pip
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    # Set non-privileged user and working directory
+    USER_ID=1001 \
+    USER_NAME=app
+
+# Install system dependencies in a single layer to reduce image size
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-urd \
+    tesseract-ocr-ara \
+    libopencv-dev \
+    python3-opencv \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for security
+RUN useradd --create-home --shell /bin/bash ${USER_NAME} && \
+    chown -R ${USER_NAME}:${USER_NAME} /home/${USER_NAME}
+
+# Set working directory and switch to the new user
+WORKDIR /app
+USER ${USER_NAME}
+
+# Copy requirements.txt first for better layer caching.
+# If requirements.txt doesn't change, this step won't be re-run.
+COPY --chown=${USER_NAME}:${USER_NAME} requirements.txt .
+
+# Install Python dependencies from the copied file
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Stage 2: Final production image
+FROM base as production
+
+# Copy the entire application code from the previous stage
+# This leverages the cached dependency installation from the 'base' stage
+COPY --chown=${USER_NAME}:${USER_NAME} . .
+
+# Create necessary directories and set ownership for the app user
+RUN mkdir -p /app/models /app/logs && \
+    chown -R ${USER_NAME}:${USER_NAME} /app
+
+# Switch to the non-root user for security
+USER ${USER_NAME}
+
+# Health check to ensure the application is running
+HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:5000/ || exit 1
+
+# Expose the port the application will run on
+EXPOSE 5000
+
+# Run the application with Gunicorn for production
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--threads", "2", "--timeout", "120", "--keep-alive", "2", "main:create_app()"]

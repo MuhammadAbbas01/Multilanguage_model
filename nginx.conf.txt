@@ -1,0 +1,40 @@
+# Nginx is a high-performance web server, and it can be used as a reverse proxy.
+
+events {
+    # Set the number of connections per worker.
+    worker_connections 1024;
+}
+
+http {
+    # Define an upstream server group for the lingua-translate service.
+    upstream lingua_translate {
+        server lingua-translate:5000;
+    }
+
+    server {
+        listen 80;
+        server_name localhost;
+
+        location / {
+            # Proxy requests to the lingua-translate service.
+            proxy_pass http://lingua_translate;
+            # Set standard headers to pass client information to the backend.
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # Rate limiting. This zone is defined for the API.
+            limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+            limit_req zone=api burst=20 nodelay;
+        }
+
+        location /metrics {
+            # Expose the /metrics endpoint to be scraped by Prometheus.
+            # Restrict access to localhost to ensure security.
+            proxy_pass http://lingua_translate;
+            allow 127.0.0.1;
+            deny all;
+        }
+    }
+}
