@@ -1,7 +1,12 @@
 flask==2.3.3
 gunicorn==21.2.0
-redis==4.6.0
-structlog==23.1.0
-prometheus-client==0.17.1
+redis==5.0.1
+structlog==23.2.0
+prometheus-client==0.19.0
 werkzeug==2.3.7
-requests==2.31.0
+
+# Optional AI dependencies (will gracefully fallback if not available)
+transformers==4.35.0
+torch==2.1.0
+tokenizers==0.14.1
+sentencepiece==0.1.99
