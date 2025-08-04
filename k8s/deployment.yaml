@@ -1,24 +1,171 @@
-# This is a comprehensive Kubernetes manifest for a production-ready deployment.
-# It includes a Deployment, Service, Ingress, and HorizontalPodAutoscaler.
+# Complete Kubernetes Deployment for Translation Service
+# Optimized and Production-Ready Configuration
 
-# The Deployment manages the pods running the application.
-apiVersion: apps/v1
-kind: Deployment
+# 1. Namespace
+apiVersion: v1
+kind: Namespace
 metadata:
   name: lingua-translate
   labels:
     app: lingua-translate
-    version: v2.0.0
+    version: v2.1.0
+---
+
+# 2. ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lingua-translate-config
+  namespace: lingua-translate
+data:
+  FLASK_ENV: "production"
+  PYTHONUNBUFFERED: "1"
+  LOG_LEVEL: "INFO"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  RATE_LIMIT: "100"
+  CACHE_TTL: "3600"
+---
+
+# 3. Secret for sensitive configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: lingua-translate-secret
+  namespace: lingua-translate
+type: Opaque
+data:
+  # Add your encoded secrets here
+  # redis-password: <base64-encoded-password>
+---
+
+# 4. Redis PersistentVolumeClaim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-storage
+  namespace: lingua-translate
 spec:
-  # Start with 3 replicas for high availability. The HPA will scale this as needed.
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: fast-ssd
+---
+
+# 5. Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: lingua-translate
+  labels:
+    app: redis
+    component: cache
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        component: cache
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+        command: 
+        - redis-server
+        - --appendonly
+        - "yes"
+        - --maxmemory
+        - "256mb"
+        - --maxmemory-policy
+        - "allkeys-lru"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-storage
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+---
+
+# 6. Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: lingua-translate
+  labels:
+    app: redis
+    component: cache
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  type: ClusterIP
+---
+
+# 7. Translation App Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lingua-translate
+  namespace: lingua-translate
+  labels:
+    app: lingua-translate
+    component: api
+spec:
   replicas: 3
-  # Use a rolling update strategy for zero-downtime deployments.
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 1
-      maxSurge: 1
-  # The selector links this deployment to the pods it manages.
+      maxSurge: 2
   selector:
     matchLabels:
       app: lingua-translate
@@ -26,138 +173,123 @@ spec:
     metadata:
       labels:
         app: lingua-translate
-        version: v2.0.0
+        component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: lingua-translate
-        # The image to use for the container.
-        image: lingua-translate:latest
+        image: your-dockerhub-username/lingua-translate:latest  # UPDATE THIS
+        imagePullPolicy: Always
         ports:
         - containerPort: 5000
           name: http
+        envFrom:
+        - configMapRef:
+            name: lingua-translate-config
+        - secretRef:
+            name: lingua-translate-secret
         env:
-        # Set environment variables for the Flask application.
-        - name: FLASK_ENV
-          value: "production"
-        - name: REDIS_HOST
-          value: "redis-service"  # Points to the Redis service in the same cluster.
-        - name: REDIS_PORT
-          value: "6379"
-        # Define resource requests and limits to ensure stable performance.
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         resources:
           requests:
             memory: "512Mi"
-            cpu: "250m"
+            cpu: "200m"
           limits:
-            memory: "2Gi"
-            cpu: "1000m"
-        # Liveness probe to restart the container if it becomes unresponsive.
+            memory: "1Gi"
+            cpu: "500m"
         livenessProbe:
           httpGet:
             path: /
             port: 5000
-          initialDelaySeconds: 60
-          periodSeconds: 30
+          initialDelaySeconds: 45
+          periodSeconds: 15
           timeoutSeconds: 10
           failureThreshold: 3
-        # Readiness probe to prevent the container from receiving traffic until it's ready.
         readinessProbe:
           httpGet:
             path: /
             port: 5000
-          initialDelaySeconds: 30
+          initialDelaySeconds: 15
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
-        # Mount an emptyDir volume for caching models, which improves performance on pod restarts.
+        startupProbe:
+          httpGet:
+            path: /
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 10
         volumeMounts:
-        - name: model-cache
-          mountPath: /app/models
+        - name: tmp
+          mountPath: /tmp
+        - name: logs
+          mountPath: /app/logs
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
       volumes:
-      - name: model-cache
-        emptyDir:
-          sizeLimit: 5Gi
-      # Pod anti-affinity to ensure pods are not scheduled on the same node,
-      # improving fault tolerance.
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchExpressions:
-                - key: app
-                  operator: In
-                  values:
-                  - lingua-translate
-              topologyKey: kubernetes.io/hostname
-
+      - name: tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      terminationGracePeriodSeconds: 30
 ---
-# The Service exposes the deployment internally with a stable DNS name.
+
+# 8. Translation Service
 apiVersion: v1
 kind: Service
 metadata:
   name: lingua-translate-service
+  namespace: lingua-translate
   labels:
     app: lingua-translate
+    component: api
 spec:
-  # ClusterIP makes the service only accessible from within the cluster.
-  type: ClusterIP
+  selector:
+    app: lingua-translate
   ports:
   - port: 80
     targetPort: 5000
     protocol: TCP
     name: http
-  selector:
-    app: lingua-translate
-
+  type: LoadBalancer
+  sessionAffinity: None
 ---
-# The Ingress exposes the service to the internet, handling routing, TLS, and rate-limiting.
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: lingua-translate-ingress
-  annotations:
-    kubernetes.io/ingress.class: "nginx"
-    # Use cert-manager to automatically provision and renew TLS certificates.
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    # Implement rate-limiting to protect the API from abuse.
-    nginx.ingress.kubernetes.io/rate-limit: "100"
-    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
-spec:
-  # Configure TLS termination for the specified host.
-  tls:
-  - hosts:
-    - api.linguatranslate.com
-    secretName: lingua-translate-tls
-  rules:
-  - host: api.linguatranslate.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: lingua-translate-service
-            port:
-              number: 80
 
----
-# The HorizontalPodAutoscaler automatically scales the number of replicas
-# based on resource usage, ensuring the application handles load efficiently.
+# 9. Horizontal Pod Autoscaler
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: lingua-translate-hpa
+  namespace: lingua-translate
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
     name: lingua-translate
-  # Define the minimum and maximum number of replicas.
-  minReplicas: 2
-  maxReplicas: 10
-  # Configure the metrics to trigger scaling.
+  minReplicas: 3
+  maxReplicas: 15
   metrics:
   - type: Resource
     resource:
@@ -171,3 +303,127 @@ spec:
       target:
         type: Utilization
         averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+---
+
+# 10. Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lingua-translate-pdb
+  namespace: lingua-translate
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: lingua-translate
+---
+
+# 11. NetworkPolicy for security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lingua-translate-network-policy
+  namespace: lingua-translate
+spec:
+  podSelector:
+    matchLabels:
+      app: lingua-translate
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - podSelector:
+        matchLabels:
+          app: nginx
+    ports:
+    - protocol: TCP
+      port: 5000
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 5000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+    - protocol: UDP
+      port: 53
+---
+
+# 12. ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: lingua-translate-metrics
+  namespace: lingua-translate
+  labels:
+    app: lingua-translate
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: lingua-translate
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+
+# 13. Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lingua-translate-ingress
+  namespace: lingua-translate
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - translate-api.yourdomain.com  # UPDATE THIS
+    secretName: lingua-translate-tls
+  rules:
+  - host: translate-api.yourdomain.com  # UPDATE THIS
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: lingua-translate-service
+            port:
+              number: 80

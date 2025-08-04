@@ -1,12 +1,9 @@
 #!/bin/bash
 
-# Lingua Translate Deployment Script
-# Supports Railway, Render, Fly.io, and Kubernetes
+# Enhanced Translation Service Deployment Script
+# This script handles both Docker and Kubernetes deployment
 
 set -e
-
-echo "🚀 Lingua Translate Deployment Script"
-echo "======================================="
 
 # Colors for output
 RED='\033[0;31m'
@@ -15,7 +12,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Helper functions
+# Configuration
+DOCKER_IMAGE="your-dockerhub-username/lingua-translate"
+VERSION="v2.1.0"
+NAMESPACE="lingua-translate"
+DOMAIN="translate-api.yourdomain.com"  # UPDATE THIS
+
+# Functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -32,132 +35,301 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Check if command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
-
-# Deployment options
-deploy_railway() {
-    log_info "Deploying to Railway..."
+check_prerequisites() {
+    log_info "Checking prerequisites..."
     
-    if ! command_exists railway; then
-        log_error "Railway CLI not found. Install with: npm install -g @railway/cli"
+    # Check Docker
+    if ! command -v docker &> /dev/null; then
+        log_error "Docker is not installed"
         exit 1
     fi
     
-    railway login
-    railway up
-    
-    log_success "Deployed to Railway!"
-}
-
-deploy_render() {
-    log_info "Deploying to Render..."
-    log_info "Please connect your GitHub repo to Render manually"
-    log_info "Use the render.yaml configuration file"
-}
-
-deploy_fly() {
-    log_info "Deploying to Fly.io..."
-    
-    if ! command_exists flyctl; then
-        log_error "Fly CLI not found. Install from: https://fly.io/docs/getting-started/installing-flyctl/"
+    # Check kubectl
+    if ! command -v kubectl &> /dev/null; then
+        log_error "kubectl is not installed"
         exit 1
     fi
     
-    flyctl launch
-    flyctl deploy
-    
-    log_success "Deployed to Fly.io!"
-}
-
-deploy_kubernetes() {
-    log_info "Deploying to Kubernetes..."
-    
-    if ! command_exists kubectl; then
-        log_error "kubectl not found. Please install Kubernetes CLI"
+    # Check if we can connect to Kubernetes cluster
+    if ! kubectl cluster-info &> /dev/null; then
+        log_error "Cannot connect to Kubernetes cluster"
         exit 1
     fi
     
-    # Apply all Kubernetes manifests
-    kubectl apply -f k8s/
-    
-    # Wait for deployment
-    kubectl rollout status deployment/lingua-translate
-    
-    log_success "Deployed to Kubernetes!"
+    log_success "Prerequisites check passed"
 }
 
-build_docker() {
+create_dockerfile() {
+    log_info "Creating optimized Dockerfile..."
+    
+    cat > Dockerfile << 'EOF'
+# Multi-stage Dockerfile for optimized production build
+FROM python:3.11-slim as builder
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Production stage
+FROM python:3.11-slim
+
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set working directory
+WORKDIR /app
+
+# Copy application code
+COPY --chown=appuser:appuser . .
+
+# Create necessary directories
+RUN mkdir -p /app/logs /tmp && \
+    chown -R appuser:appuser /app /tmp
+
+# Switch to non-root user
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:5000/ || exit 1
+
+# Expose port
+EXPOSE 5000
+
+# Run application
+CMD ["python", "main.py"]
+EOF
+
+    log_success "Dockerfile created"
+}
+
+create_requirements() {
+    log_info "Creating requirements.txt..."
+    
+    cat > requirements.txt << 'EOF'
+Flask==3.0.0
+Werkzeug==3.0.1
+structlog==23.2.0
+prometheus-client==0.19.0
+gunicorn==21.2.0
+redis==5.0.1
+transformers==4.35.2
+torch==2.1.1
+sentencepiece==0.1.99
+protobuf==4.25.1
+requests==2.31.0
+urllib3==2.1.0
+EOF
+
+    log_success "requirements.txt created"
+}
+
+build_and_push_image() {
     log_info "Building Docker image..."
     
-    if ! command_exists docker; then
-        log_error "Docker not found. Please install Docker"
-        exit 1
+    # Build the image
+    docker build -t ${DOCKER_IMAGE}:${VERSION} -t ${DOCKER_IMAGE}:latest .
+    
+    log_success "Docker image built successfully"
+    
+    # Push to registry
+    log_info "Pushing Docker image to registry..."
+    docker push ${DOCKER_IMAGE}:${VERSION}
+    docker push ${DOCKER_IMAGE}:latest
+    
+    log_success "Docker image pushed successfully"
+}
+
+deploy_to_kubernetes() {
+    log_info "Deploying to Kubernetes..."
+    
+    # Create namespace if it doesn't exist
+    kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+    
+    # Apply the Kubernetes manifests
+    log_info "Applying Kubernetes manifests..."
+    
+    # Update the deployment YAML with correct image
+    sed -i "s|your-dockerhub-username/lingua-translate:latest|${DOCKER_IMAGE}:${VERSION}|g" deployment.yaml
+    sed -i "s|translate-api.yourdomain.com|${DOMAIN}|g" deployment.yaml
+    
+    kubectl apply -f deployment.yaml
+    
+    log_success "Kubernetes manifests applied"
+}
+
+wait_for_deployment() {
+    log_info "Waiting for deployment to be ready..."
+    
+    # Wait for deployment
+    kubectl wait --for=condition=available --timeout=300s deployment/lingua-translate -n ${NAMESPACE}
+    
+    # Wait for pods to be ready
+    kubectl wait --for=condition=ready --timeout=300s pods -l app=lingua-translate -n ${NAMESPACE}
+    
+    log_success "Deployment is ready"
+}
+
+run_tests() {
+    log_info "Running deployment tests..."
+    
+    # Get service endpoint
+    SERVICE_IP=$(kubectl get service lingua-translate-service -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+    
+    if [ -z "$SERVICE_IP" ]; then
+        log_warning "LoadBalancer IP not available yet, using port-forward for testing"
+        kubectl port-forward -n ${NAMESPACE} service/lingua-translate-service 8080:80 &
+        PF_PID=$!
+        sleep 5
+        SERVICE_URL="http://localhost:8080"
+    else
+        SERVICE_URL="http://${SERVICE_IP}"
     fi
     
-    docker build -t lingua-translate:latest .
+    # Test health endpoint
+    log_info "Testing health endpoint..."
+    curl -f "${SERVICE_URL}/" || (log_error "Health check failed" && exit 1)
     
-    log_success "Docker image built successfully!"
+    # Test translation endpoints
+    log_info "Testing translation endpoints..."
+    
+    # Test Spanish
+    curl -X POST "${SERVICE_URL}/translate" \
+        -H "Content-Type: application/json" \
+        -d '{"text": "Hello world", "target_lang": "es"}' \
+        -f || (log_error "Spanish translation test failed" && exit 1)
+    
+    # Test French
+    curl -X POST "${SERVICE_URL}/translate" \
+        -H "Content-Type: application/json" \
+        -d '{"text": "Your premium subscription has been activated successfully", "target_lang": "fr"}' \
+        -f || (log_error "French translation test failed" && exit 1)
+    
+    # Test Italian
+    curl -X POST "${SERVICE_URL}/translate" \
+        -H "Content-Type: application/json" \
+        -d '{"text": "Welcome to our store", "target_lang": "it"}' \
+        -f || (log_error "Italian translation test failed" && exit 1)
+    
+    # Test German
+    curl -X POST "${SERVICE_URL}/translate" \
+        -H "Content-Type: application/json" \
+        -d '{"text": "Thank you", "target_lang": "de"}' \
+        -f || (log_error "German translation test failed" && exit 1)
+    
+    # Test supported languages
+    curl -f "${SERVICE_URL}/languages" || (log_error "Languages endpoint test failed" && exit 1)
+    
+    # Clean up port-forward if used
+    if [ ! -z "$PF_PID" ]; then
+        kill $PF_PID 2>/dev/null || true
+    fi
+    
+    log_success "All tests passed"
 }
 
-# Main menu
-show_menu() {
+show_deployment_info() {
+    log_info "Deployment Information:"
+    echo "=========================="
+    
+    echo "Namespace: ${NAMESPACE}"
+    echo "Image: ${DOCKER_IMAGE}:${VERSION}"
+    echo "Domain: ${DOMAIN}"
     echo ""
-    echo "Select deployment option:"
-    echo "1) Railway (Recommended for free tier)"
-    echo "2) Render (Free web services)"  
-    echo "3) Fly.io (Global edge deployment)"
-    echo "4) Kubernetes (Production)"
-    echo "5) Build Docker image only"
-    echo "6) Exit"
+    
+    echo "Pods:"
+    kubectl get pods -n ${NAMESPACE}
     echo ""
+    
+    echo "Services:"
+    kubectl get services -n ${NAMESPACE}
+    echo ""
+    
+    echo "Ingress:"
+    kubectl get ingress -n ${NAMESPACE}
+    echo ""
+    
+    # Get external IP
+    EXTERNAL_IP=$(kubectl get service lingua-translate-service -n ${NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+    if [ ! -z "$EXTERNAL_IP" ]; then
+        echo "External IP: ${EXTERNAL_IP}"
+        echo "API URL: http://${EXTERNAL_IP}"
+    else
+        log_warning "External IP not yet assigned. Use 'kubectl get services -n ${NAMESPACE}' to check later."
+    fi
+    
+    echo ""
+    echo "Useful commands:"
+    echo "- View logs: kubectl logs -f deployment/lingua-translate -n ${NAMESPACE}"
+    echo "- Scale deployment: kubectl scale deployment lingua-translate --replicas=5 -n ${NAMESPACE}"
+    echo "- Port forward: kubectl port-forward -n ${NAMESPACE} service/lingua-translate-service 8080:80"
+    echo "- Delete deployment: kubectl delete namespace ${NAMESPACE}"
 }
 
-# Main script
+# Main execution
 main() {
-    # Check if we're in the right directory
-    if [[ ! -f "main.py" ]]; then
-        log_error "main.py not found. Please run this script from the project root directory."
-        exit 1
-    fi
+    echo "=================================================="
+    echo "Enhanced Translation Service Deployment Script"
+    echo "Version: ${VERSION}"
+    echo "=================================================="
     
-    while true; do
-        show_menu
-        read -p "Enter your choice (1-6): " choice
-        
-        case $choice in
-            1)
-                deploy_railway
-                break
-                ;;
-            2)
-                deploy_render
-                break
-                ;;
-            3)
-                deploy_fly
-                break
-                ;;
-            4)
-                deploy_kubernetes
-                break
-                ;;
-            5)
-                build_docker
-                break
-                ;;
-            6)
-                log_info "Goodbye!"
-                exit 0
-                ;;
-            *)
-                log_error "Invalid option. Please choose 1-6."
-                ;;
-        esac
-    done
+    # Parse command line arguments
+    case "${1:-all}" in
+        "check")
+            check_prerequisites
+            ;;
+        "build")
+            check_prerequisites
+            create_dockerfile
+            create_requirements
+            build_and_push_image
+            ;;
+        "deploy")
+            check_prerequisites
+            deploy_to_kubernetes
+            wait_for_deployment
+            ;;
+        "test")
+            check_prerequisites
+            run_tests
+            ;;
+        "info")
+            show_deployment_info
+            ;;
+        "all"|*)
+            check_prerequisites
+            create_dockerfile
+            create_requirements
+            build_and_push_image
+            deploy_to_kubernetes
+            wait_for_deployment
+            run_tests
+            show_deployment_info
+            ;;
+    esac
+    
+    log_success "Script completed successfully!"
 }
 
-# Run main function
+# Run main function with all arguments
 main "$@"

@@ -1,12 +1,24 @@
-# Prometheus configuration for monitoring the lingua-translate service.
 global:
-  # How often to scrape targets.
   scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
 
 scrape_configs:
-  # Define a job for the lingua-translate service.
   - job_name: 'lingua-translate'
     static_configs:
       - targets: ['lingua-translate:5000']
-    # The path where metrics are exposed.
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
     metrics_path: '/metrics'
