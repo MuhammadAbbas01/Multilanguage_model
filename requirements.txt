@@ -4,8 +4,9 @@ redis==5.0.1
 structlog==23.2.0
 prometheus-client==0.19.0
 werkzeug==2.3.7
-transformers==4.35.0
-torch==2.1.0
-tokenizers==0.14.1
+requests==2.31.0
+transformers==4.26.0  # <--- CHANGED THIS LINE!
+torch==1.13.1         # <--- CHANGED THIS LINE!
+tokenizers==0.13.3    # <--- CHANGED THIS LINE for compatibility with transformers 4.26.0
 sentencepiece==0.1.99
-numpy==1.26.0 
+numpy==1.26.0

@@ -2,7 +2,8 @@
 """
 Enhanced Translation Engine with better multi-language support
 """
-
+# Add sys import to main.py at the top
+import sys
 import os
 import time
 import json
@@ -14,7 +15,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import structlog
 from prometheus_client import Counter, Histogram, generate_latest
 # Add imports for Hugging Face transformers pipeline
-from transformers import pipeline
+from transformers import pipeline # UNCOMMENTED THIS LINE!
 
 # Configure structured logging
 structlog.configure(
@@ -230,8 +231,10 @@ class EnhancedTranslationEngine:
         
         # Try to load transformers, fall back to enhanced logic if not available
         self.ai_models = {}
+        # UNCOMMENTED - AI MODEL LOADING SECTION START
         try:
             import torch
+            # from transformers import pipeline # Already imported above
             device = 0 if torch.cuda.is_available() else -1
             
             # AI models for English to Spanish, French, Italian, German, Arabic, and Chinese
@@ -288,6 +291,7 @@ class EnhancedTranslationEngine:
         except Exception as e:
             logger.warning(f"Could not load AI models: {e}. Using enhanced rule-based translation only.")
             self.ai_models = {}
+        # UNCOMMENTED - AI MODEL LOADING SECTION END
     
     def get_supported_languages(self) -> List[str]:
         return self.supported_languages
@@ -301,7 +305,7 @@ class EnhancedTranslationEngine:
         3. If both fail, return a default non-translated result.
         """
         start_time = time.time()
-        
+        # UNCOMMENTED - TRANSLATION LOGIC USING AI MODEL START
         try:
             # First, try a fast dictionary lookup
             dictionary_translation = self._enhanced_translate(text, target_lang)
@@ -315,7 +319,8 @@ class EnhancedTranslationEngine:
                     'translated_text': translated_text,
                     'detected_language': "en", # Assuming dictionary is from English
                     'confidence': 1.0,  # High confidence for a hard-coded match
-                    'translation_time': translation_time
+                    'translation_time': translation_time,
+                    'method': 'dictionary' # Added method key
                 }
             
             # If no dictionary translation was found, fall back to the AI model
@@ -329,7 +334,8 @@ class EnhancedTranslationEngine:
                     'translated_text': translated_text,
                     'detected_language': "en", # Model translates from English
                     'confidence': 0.95,
-                    'translation_time': translation_time
+                    'translation_time': translation_time,
+                    'method': 'ai_model' # Added method key
                 }
 
             # If both dictionary and AI model are not available, return a default response
@@ -341,7 +347,8 @@ class EnhancedTranslationEngine:
                 'translated_text': translated_text,
                 'detected_language': "en",
                 'confidence': 0.0,
-                'translation_time': translation_time
+                'translation_time': translation_time,
+                'method': 'fallback_placeholder' # Added method key
             }
             
         except Exception as e:
@@ -350,8 +357,10 @@ class EnhancedTranslationEngine:
                 'translated_text': f"Translation Error: {text}",
                 'detected_language': "en",
                 'confidence': 0.0,
-                'translation_time': time.time() - start_time
+                'translation_time': time.time() - start_time,
+                'method': 'error' # Added method key
             }
+        # UNCOMMENTED - TRANSLATION LOGIC USING AI MODEL END
     
     def _enhanced_translate(self, text: str, target_lang: str) -> Optional[str]:
         """
@@ -451,7 +460,7 @@ class TranslationAPI:
 
             # Validate request
             if not request.is_json:
-                return jsonify({'error': 'Content-Type must be application/json'}), 400
+                return jsonify({'error': 'Content-Type must be JSON'}), 400
 
             data = request.get_json()
             validation_error = self._validate_translate_request(data)
@@ -491,7 +500,8 @@ class TranslationAPI:
                 'style': style,
                 'confidence_score': translation_result.get('confidence', 0.95),
                 'translation_time': round(translation_time, 3),
-                'cached': False
+                'cached': False,
+                'method': translation_result.get('method', 'unknown') # Added method key for consistency
             }
 
             # Cache result
@@ -537,7 +547,8 @@ class TranslationAPI:
                 results.append({
                     'original': text,
                     'translated': result['translated_text'],
-                    'confidence': result.get('confidence', 0.95)
+                    'confidence': result.get('confidence', 0.95),
+                    'method': result.get('method', 'unknown') # Added method key for consistency
                 })
 
             return jsonify({
@@ -582,6 +593,17 @@ def create_app():
     return api.app
 
 if __name__ == '__main__':
-    # For development
-    api = TranslationAPI()
-    api.run(debug=True)
+    # For development and debugging
+    print("Starting Lingua Translate API...")
+    print(f"Python version: {sys.version}")
+    
+    try:
+        api = TranslationAPI()
+        print("TranslationAPI initialized successfully")
+        print(f"Supported languages: {api.translator.get_supported_languages()}")
+        print(f"AI models loaded: {list(api.translator.ai_models.keys())}")
+        api.run(host='0.0.0.0', port=5000, debug=False)  # Set debug=False for production
+    except Exception as e:
+        print(f"Failed to start application: {e}")
+        import traceback
+        traceback.print_exc()
