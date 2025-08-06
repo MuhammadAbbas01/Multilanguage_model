@@ -5,8 +5,9 @@ structlog==23.2.0
 prometheus-client==0.19.0
 werkzeug==2.3.7
 
-# Optional AI dependencies (will gracefully fallback if not available)
+AI dependencies for knowledge-based translation
 transformers==4.35.0
 torch==2.1.0
 tokenizers==0.14.1
 sentencepiece==0.1.99
+numpy==1.26.0 # <--- THIS IS THE CRUCIAL LINE ADDED TO FIX COMPATIBILITY
