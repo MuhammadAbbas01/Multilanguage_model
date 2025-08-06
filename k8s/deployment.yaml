@@ -1,6 +1,7 @@
-# Complete Kubernetes Deployment for Translation Service
+# Optimized Kubernetes Deployment for Lingua Translate
+# This version increases the probe timeouts to give the application
+# enough time to download and load its large AI models.
 
-# 1. Namespace
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -8,8 +9,6 @@ metadata:
   labels:
     app: lingua-translate
 ---
-
-# 2. ConfigMap for application configuration
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,81 +18,7 @@ data:
   FLASK_ENV: "production"
   PYTHONUNBUFFERED: "1"
   LOG_LEVEL: "INFO"
-  REDIS_HOST: "redis-service"
-  REDIS_PORT: "6379"
 ---
-
-# 3. Redis Deployment
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: redis
-  namespace: lingua-translate
-  labels:
-    app: redis
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: redis
-  template:
-    metadata:
-      labels:
-        app: redis
-    spec:
-      containers:
-      - name: redis
-        image: redis:7-alpine
-        ports:
-        - containerPort: 6379
-        command: ["redis-server", "--appendonly", "yes"]
-        resources:
-          requests:
-            memory: "64Mi"
-            cpu: "50m"
-          limits:
-            memory: "128Mi"
-            cpu: "100m"
-        livenessProbe:
-          exec:
-            command:
-            - redis-cli
-            - ping
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          exec:
-            command:
-            - redis-cli
-            - ping
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        volumeMounts:
-        - name: redis-data
-          mountPath: /data
-      volumes:
-      - name: redis-data
-        emptyDir: {}
----
-
-# 4. Redis Service
-apiVersion: v1
-kind: Service
-metadata:
-  name: redis-service
-  namespace: lingua-translate
-  labels:
-    app: redis
-spec:
-  selector:
-    app: redis
-  ports:
-  - port: 6379
-    targetPort: 6379
-  type: ClusterIP
----
-
-# 5. Translation App Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -101,8 +26,14 @@ metadata:
   namespace: lingua-translate
   labels:
     app: lingua-translate
+    version: v1.0
 spec:
-  replicas: 3
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
   selector:
     matchLabels:
       app: lingua-translate
@@ -110,43 +41,53 @@ spec:
     metadata:
       labels:
         app: lingua-translate
+        version: v1.0
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       containers:
       - name: lingua-translate
-        image: your-registry/lingua-translate:latest  # Replace with your image
+        image: muhamadabbas/my-lingua-app:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 5000
+          name: http
         envFrom:
         - configMapRef:
             name: lingua-translate-config
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "100m"
-          limits:
-            memory: "512Mi"
+            memory: "2Gi"
             cpu: "200m"
+          limits:
+            memory: "4Gi"
+            cpu: "500m"
         livenessProbe:
           httpGet:
             path: /
             port: 5000
-          initialDelaySeconds: 30
-          periodSeconds: 10
+          initialDelaySeconds: 120 # Increased initial delay to 120 seconds
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /
             port: 5000
-          initialDelaySeconds: 5
-          periodSeconds: 5
+          initialDelaySeconds: 60  # Increased initial delay to 60 seconds
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
         volumeMounts:
-        - name: logs
-          mountPath: /app/logs
+        - name: tmp-volume
+          mountPath: /tmp
       volumes:
-      - name: logs
+      - name: tmp-volume
         emptyDir: {}
+      terminationGracePeriodSeconds: 30
 ---
-
-# 6. Translation Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -155,16 +96,16 @@ metadata:
   labels:
     app: lingua-translate
 spec:
+  type: LoadBalancer
   selector:
     app: lingua-translate
   ports:
   - port: 80
     targetPort: 5000
     protocol: TCP
-  type: LoadBalancer
+    name: http
+  sessionAffinity: None
 ---
-
-# 7. Horizontal Pod Autoscaler
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -175,8 +116,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: lingua-translate
-  minReplicas: 3
-  maxReplicas: 10
+  minReplicas: 2
+  maxReplicas: 8
   metrics:
   - type: Resource
     resource:
@@ -190,58 +131,16 @@ spec:
       target:
         type: Utilization
         averageUtilization: 80
----
-
-# 8. NetworkPolicy for security
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: lingua-translate-network-policy
-  namespace: lingua-translate
-spec:
-  podSelector:
-    matchLabels:
-      app: lingua-translate
-  policyTypes:
-  - Ingress
-  - Egress
-  ingress:
-  - from:
-    - podSelector:
-        matchLabels:
-          app: nginx
-    ports:
-    - protocol: TCP
-      port: 5000
-  egress:
-  - to:
-    - podSelector:
-        matchLabels:
-          app: redis
-    ports:
-    - protocol: TCP
-      port: 6379
-  - to: []
-    ports:
-    - protocol: TCP
-      port: 443
-    - protocol: TCP
-      port: 80
----
-
-# 9. ServiceMonitor for Prometheus
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: lingua-translate-metrics
-  namespace: lingua-translate
-  labels:
-    app: lingua-translate
-spec:
-  selector:
-    matchLabels:
-      app: lingua-translate
-  endpoints:
-  - port: http
-    path: /metrics
-    interval: 30s
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60

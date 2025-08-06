@@ -71,8 +71,8 @@ class EnhancedTranslationEngine:
     """Enhanced translation engine with comprehensive language support"""
     
     def __init__(self):
-        # Updated: Added Russian, Turkish, and Farsi to supported languages
-        self.supported_languages = ["en", "es", "fr", "de", "it", "ja", "ko", "zh", "ru", "tr", "fa", "ar", "pt"]
+        # Corrected: Only Portuguese, Turkish, and Farsi removed. Russian and others remain.
+        self.supported_languages = ["en", "es", "fr", "de", "it", "ja", "ko", "zh", "ru", "ar"]
         
         # Enhanced translation dictionaries
         self.translations = {
@@ -149,7 +149,6 @@ class EnhancedTranslationEngine:
                 "good morning": "buongiorno",
                 "welcome": "benvenuto",
                 "login": "accedi",
-                "register": "registrati",
                 "checkout": "checkout",
                 # Added new phrase
                 "you have reached your limit": "hai raggiunto il tuo limite",
@@ -170,29 +169,7 @@ class EnhancedTranslationEngine:
                 "checkout": "الدفع",
                 "hello, world!": "مرحبا، العالم!" # Added to match test case
             },
-            "pt": {
-                "hello": "olá",
-                "world": "mundo",
-                "thank you": "obrigado",
-                "good morning": "bom dia",
-                "welcome": "bem-vindo",
-                "login": "entrar",
-                "register": "registar",
-                "checkout": "finalizar compra",
-                "hello, world!": "olá, mundo!" # Added to match test case
-            },
-            "zh": {
-                "hello": "你好",
-                "world": "世界",
-                "thank you": "谢谢",
-                "good morning": "早上好",
-                "welcome": "欢迎",
-                "login": "登录",
-                "register": "注册",
-                "checkout": "结帐",
-                "hello, world!": "你好，世界！" # Added to match test case
-            },
-            # Added new language: Russian
+            # Corrected: Russian translations remain
             "ru": {
                 "hello": "здравствуйте",
                 "world": "мир",
@@ -204,29 +181,16 @@ class EnhancedTranslationEngine:
                 "checkout": "оформление заказа",
                 "hello, world!": "привет, мир!"
             },
-            # Added new language: Turkish
-            "tr": {
-                "hello": "merhaba",
-                "world": "dünya",
-                "thank you": "teşekkür ederim",
-                "good morning": "günaydın",
-                "welcome": "hoş geldiniz",
-                "login": "giriş yap",
-                "register": "kaydol",
-                "checkout": "ödeme",
-                "hello, world!": "merhaba, dünya!"
-            },
-            # Added new language: Farsi (Persian)
-            "fa": {
-                "hello": "سلام",
-                "world": "جهان",
-                "thank you": "متشکرم",
-                "good morning": "صبح بخیر",
-                "welcome": "خوش آمدید",
-                "login": "ورود",
-                "register": "ثبت نام",
-                "checkout": "پرداخت",
-                "hello, world!": "سلام، جهان!"
+            "zh": {
+                "hello": "你好",
+                "world": "世界",
+                "thank you": "谢谢",
+                "good morning": "早上好",
+                "welcome": "欢迎",
+                "login": "登录",
+                "register": "注册",
+                "checkout": "结帐",
+                "hello, world!": "你好，世界！" # Added to match test case
             },
             # NEW: Added Japanese translations to include previously failed test cases
             "ja": {
@@ -270,7 +234,7 @@ class EnhancedTranslationEngine:
             import torch
             device = 0 if torch.cuda.is_available() else -1
             
-            # AI models for English to Spanish, French, Italian, German, Arabic, Portuguese, and Chinese
+            # AI models for English to Spanish, French, Italian, German, Arabic, and Chinese
             # These are kept as you specified.
             self.ai_models["es"] = pipeline("translation_en_to_es", model="Helsinki-NLP/opus-mt-en-es", device=device)
             self.ai_models["fr"] = pipeline("translation_en_to_fr", model="Helsinki-NLP/opus-mt-en-fr", device=device)
@@ -289,12 +253,7 @@ class EnhancedTranslationEngine:
             except Exception as e:
                 logger.warning(f"Could not load AI model for Arabic: {e}.")
 
-            # This block for Portuguese is confirmed to be correct and will now function
-            try:
-                self.ai_models["pt"] = pipeline("translation_en_to_pt", model="Helsinki-NLP/opus-mt-en-pt", device=device)
-                logger.info("AI translation model for Portuguese loaded.")
-            except Exception as e:
-                logger.warning(f"Could not load AI model for Portuguese: {e}.")
+            # Portuguese AI model removed
             
             try:
                 self.ai_models["zh"] = pipeline("translation_en_to_zh", model="Helsinki-NLP/opus-mt-en-zh", device=device)
@@ -302,26 +261,15 @@ class EnhancedTranslationEngine:
             except Exception as e:
                 logger.warning(f"Could not load AI model for Chinese: {e}.")
 
-            # Added new AI translation model for Russian
+            # Corrected: Russian AI model remains
             try:
                 self.ai_models["ru"] = pipeline("translation_en_to_ru", model="Helsinki-NLP/opus-mt-en-ru", device=device)
                 logger.info("AI translation model for Russian loaded.")
             except Exception as e:
                 logger.warning(f"Could not load AI model for Russian: {e}.")
 
-            # Added new AI translation model for Turkish
-            try:
-                self.ai_models["tr"] = pipeline("translation_en_to_tr", model="Helsinki-NLP/opus-mt-en-tr", device=device)
-                logger.info("AI translation model for Turkish loaded.")
-            except Exception as e:
-                logger.warning(f"Could not load AI model for Turkish: {e}.")
-
-            # Added new AI translation model for Farsi (Persian)
-            try:
-                self.ai_models["fa"] = pipeline("translation_en_to_fa", model="Helsinki-NLP/opus-mt-en-fa", device=device)
-                logger.info("AI translation model for Farsi loaded.")
-            except Exception as e:
-                logger.warning(f"Could not load AI model for Farsi: {e}.")
+            # Turkish AI model removed
+            # Farsi (Persian) AI model removed
 
             # NEW: Added AI translation model for Japanese
             try:
@@ -553,9 +501,9 @@ class TranslationAPI:
                 logger.warning(f"Failed to cache result: {e}")
 
             logger.info("Translation completed", 
-                            source_lang=source_lang, 
-                            target_lang=target_lang,
-                            translation_time=translation_time)
+                                source_lang=source_lang, 
+                                target_lang=target_lang,
+                                translation_time=translation_time)
             
             return jsonify(response_data)
 
