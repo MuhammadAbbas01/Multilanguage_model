@@ -1,0 +1,131 @@
+# Lightweight Kubernetes deployment for Codespaces optimized app
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lingua-translate-lite
+  labels:
+    app: lingua-translate-lite
+    version: codespaces-v1.0.0
+spec:
+  replicas: 2  # Start small for Codespaces
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: lingua-translate-lite
+  template:
+    metadata:
+      labels:
+        app: lingua-translate-lite
+        version: codespaces-v1.0.0
+    spec:
+      containers:
+      - name: lingua-translate-lite
+        image: lingua-translate-lite:latest
+        ports:
+        - containerPort: 5000
+          name: http
+        env:
+        - name: FLASK_ENV
+          value: "production"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        # Optimized resources for lightweight app
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        # Small cache volume
+        volumeMounts:
+        - name: cache-volume
+          mountPath: /app/cache
+      volumes:
+      - name: cache-volume
+        emptyDir:
+          sizeLimit: 512Mi
+
+---
+# Service for internal access
+apiVersion: v1
+kind: Service
+metadata:
+  name: lingua-translate-lite-service
+  labels:
+    app: lingua-translate-lite
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 5000
+    protocol: TCP
+    name: http
+  selector:
+    app: lingua-translate-lite
+
+---
+# LoadBalancer service for external access
+apiVersion: v1
+kind: Service
+metadata:
+  name: lingua-translate-lite-external
+  labels:
+    app: lingua-translate-lite
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 5000
+    protocol: TCP
+    name: http
+  selector:
+    app: lingua-translate-lite
+
+---
+# Horizontal Pod Autoscaler (optional)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: lingua-translate-lite-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: lingua-translate-lite
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
